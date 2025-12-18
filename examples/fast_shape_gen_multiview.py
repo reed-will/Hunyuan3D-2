@@ -6,18 +6,19 @@ from PIL import Image
 from hy3dgen.rembg import BackgroundRemover
 from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
-images = {
-    "front": "assets/demo-mv/F.png",
-    "left": "assets/demo-mv/L.png",
-    "back": "assets/demo-mv/B.png"
-}
+images_path = [
+    "assets/demo-mv/F.png",
+    "assets/demo-mv/L.png",
+    "assets/demo-mv/B.png"
+]
 
-for key in images:
-    image = Image.open(images[key]).convert("RGBA")
+images = []
+for image_path in images_path:
+    image = Image.open(image_path)
     if image.mode == 'RGB':
         rembg = BackgroundRemover()
         image = rembg(image)
-    images[key] = image
+    images.append(image)
 
 pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
     'tencent/Hunyuan3D-2mv',
