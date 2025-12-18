@@ -7,9 +7,9 @@ from hy3dgen.rembg import BackgroundRemover
 from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
 images = {
-    "front": "assets/example_mv_images/1/front.png",
-    "left": "assets/example_mv_images/1/left.png",
-    "back": "assets/example_mv_images/1/back.png"
+    "front": "assets/demo-mv/F.png",
+    "left": "assets/demo-mv/L.png",
+    "back": "assets/demo-mv/B.png"
 }
 
 for key in images:
