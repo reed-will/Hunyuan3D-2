@@ -8,10 +8,10 @@ from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
 
 images = {
-    'front':  "assets/demo-mv/F.png",
-    'left':   "assets/demo-mv/R.png",
-    'back':   "assets/demo-mv/B.png",
-    'right':  "assets/demo-mv/L.png"
+    'front':  "assets/demo-mv/F.png"
+    ,'left':   "assets/demo-mv/R.png"
+#    ,'back':   "assets/demo-mv/B.png"
+#    ,'right':  "assets/demo-mv/L.png"
 }
 
 for key in images:
