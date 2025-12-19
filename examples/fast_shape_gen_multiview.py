@@ -9,9 +9,9 @@ from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
 images = {
     'front':  "assets/demo-mv/F.png",
-    'left':   "assets/demo-mv/L.png",
+    'left':   "assets/demo-mv/R.png",
     'back':   "assets/demo-mv/B.png",
-    'right':  "assets/demo-mv/R.png"
+    'right':  "assets/demo-mv/L.png"
 }
 
 for key in images:
@@ -23,7 +23,7 @@ for key in images:
 
 pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
     'tencent/Hunyuan3D-2mv',
-    subfolder='hunyuan3d-dit-v2-mv-turbo',
+    subfolder='hunyuan3d-dit-v2-mv-fast',
     variant='fp16'
 )
 pipeline.enable_flashvdm()
