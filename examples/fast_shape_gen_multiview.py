@@ -11,7 +11,7 @@ images = {
     'front':  "assets/demo-mv/F.png"
 #    ,'left':   "assets/demo-mv/L.png"
     ,'back':   "assets/demo-mv/B.png"
-#    ,'right':  "assets/demo-mv/R.png"
+    ,'right':  "assets/demo-mv/R.png"
 }
 
 for key in images:
