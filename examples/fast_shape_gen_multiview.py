@@ -30,7 +30,7 @@ for key in images:
 
 pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
     'tencent/Hunyuan3D-2mv',
-    subfolder='hunyuan3d-dit-v2-mv-turbo',
+    subfolder='hunyuan3d-dit-v2-mv-fast',
     variant='fp16'
 )
 pipeline.enable_flashvdm()
@@ -38,10 +38,10 @@ start_time = time.time()
 mesh = pipeline(
     image=images,
     num_inference_steps=5,
-    octree_resolution=380,
+    octree_resolution=380,   # play with this
     num_chunks=20000,
-    generator=torch.manual_seed(12345),
+    generator=torch.manual_seed(12345),  # manual seed eh?
     output_type='trimesh'
 )[0]
 print("--- %s seconds ---" % (time.time() - start_time))
-mesh.export(f'demo_mv3.glb')
+mesh.export(f'demo_mv3.glb')  # always a zillion degenerated faces acc to MeshLab; why?
