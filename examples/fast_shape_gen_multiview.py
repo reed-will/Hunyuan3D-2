@@ -30,7 +30,7 @@ for key in images:
 
 pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
     'tencent/Hunyuan3D-2mv',
-    subfolder='hunyuan3d-dit-v2-mv-fast',
+    subfolder='hunyuan3d-dit-v2-mv',
     variant='fp16'
 )
 pipeline.enable_flashvdm()
