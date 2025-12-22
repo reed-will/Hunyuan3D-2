@@ -7,11 +7,18 @@ from hy3dgen.rembg import BackgroundRemover
 from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
 
-images = {
-    'front':  "assets/demo-mv/F.png"
-    ,'left':   "assets/demo-mv/L.png"
-    ,'back':   "assets/demo-mv/B.png"
-    ,'right':  "assets/demo-mv/R.png"
+# images = { # note: "left" means not go to a view from Stage Left, it means Left in the Object's frame of reference!!
+#     'front':  "assets/demo-mv/F.png"
+#     ,'left':   "assets/demo-mv/L.png"
+#     ,'back':   "assets/demo-mv/B.png"
+#     ,'right':  "assets/demo-mv/R.png"
+# }
+
+images = { # note: "left" means not go to a view from Stage Left, it means Left in the Object's frame of reference!!
+    'front':  "assets/demo-N-case1/f.jpg"
+    ,'left':   "assets/demo-N-case1/l.jpg"
+    ,'back':   "assets/demo-N-case1/b.jpg"
+    ,'right':  "assets/demo-N-case1/r.jpg"
 }
 
 for key in images:
