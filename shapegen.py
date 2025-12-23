@@ -30,7 +30,7 @@ def gen_from_images(subfolder, pipeline, rembg_model):
             if not images['right']: images['right'] = process_image_views(file, {"r", "right"})
 
     view_order = ['front', 'left', 'back', 'right']
-    final_views_paths = {}
+    final_views_images = {}
 
     for view_name in view_order:
         path = images[view_name]
@@ -64,39 +64,57 @@ def gen_from_images(subfolder, pipeline, rembg_model):
     return 0
 
 def main():
-    rembg_model = BackgroundRemover()
-    pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-        'tencent/Hunyuan3D-2mv',
-        subfolder='hunyuan3d-dit-v2-mv-turbo',
-        variant='fp16'
-    )
-    pipeline.enable_flashvdm()
+    print("Loading models to GPU...")
+    try:
+        rembg_model = BackgroundRemover()
+        pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+            'tencent/Hunyuan3D-2mv',
+            subfolder='hunyuan3d-dit-v2-mv-turbo',
+            variant='fp16'
+        )
+        pipeline.to("cuda")
+        pipeline.enable_flashvdm()
+    except Exception as e:
+        print(f"CRITICAL ERROR: Failed to load models.\n{e}")
+        return
     
-    script_root = pathlib.Path(__file__).parent.resolve()
     parser = argparse.ArgumentParser(description="Generate meshes from folders")
-    
     parser.add_argument("folder", help="The name/path of the folder")
     parser.add_argument("flag", nargs="?", default=None, help="Set to 'batch' for batch processing")
 
     args = parser.parse_args()
-    root_path = pathlib.Path(args.folder)
+    root_path = pathlib.Path(args.folder).resolve()
 
     if not root_path.is_dir():
         print(f"Error: '{args.folder}' is not a directory.")
         return
 
-    if args.flag == "batch":
-        print(f"--- BATCH MODE: Scanning subfolders in {root_path.name} ---")
-        
-        # 1. Find all subfolders inside the root folder
-        subfolders = [d for d in root_path.iterdir() if d.is_dir()]
+    # Determine which folders to process
+    targets = [root_path] if args.flag != "batch" else [d for d in root_path.iterdir() if d.is_dir()]
 
-        for subfolder in subfolders:
-            print(f"\nEntering subfolder: {subfolder.name}")
-            gen_from_images(subfolder, pipeline, rembg_model)
-    else:
-        print(f"--- STANDARD MODE: Scanning files in {root_path.name} ---")
-        gen_from_images(root_path, pipeline, rembg_model)
+    print(f"Starting process for {len(targets)} target(s)...")
+
+    for target in targets:
+        print(f"\n{'='*30}")
+        print(f"Processing: {target.name}")
+        try:
+            gen_from_images(target, pipeline, rembg_model)
+        except torch.cuda.OutOfMemoryError:
+            print(f"FAILED: Out of GPU Memory on {target.name}. Try reducing octree_resolution.")
+            # Clear cache to attempt next folder
+            torch.cuda.empty_cache()
+        except Exception as e:
+            print(f"FAILED: An unexpected error occurred on {target.name}")
+            print(f"Error details: {e}")
+            # Optional: print(traceback.format_exc()) for full debug info
+        else:
+            print(f"SUCCESS: Finished {target.name}")
+        finally:
+            # Always clear memory after each folder to prevent "memory creep"
+            torch.cuda.empty_cache()
+
+    print(f"\n{'='*30}")
+    print("Batch processing complete.")
 
 if __name__ == "__main__":
     main()
