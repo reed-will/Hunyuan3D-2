@@ -20,7 +20,6 @@ def gen_from_images(subfolder, pipeline, rembg_model):
     # Initialize dictionary with None
     images = {'front': None, 'left': None, 'back': None, 'right': None}
     
-    # 1. Collection Phase: Find the files
     for file in subfolder.iterdir():
         if file.is_file():
             # Check for each view, but only if we haven't found it yet
@@ -31,11 +30,10 @@ def gen_from_images(subfolder, pipeline, rembg_model):
 
     view_order = ['front', 'left', 'back', 'right']
     final_views_images = {}
-
+    print(f"found front image: {images['front']}")
     for view_name in view_order:
         path = images[view_name]
         if path is not None:
-            # Open and Remove Background immediately
             img = Image.open(path).convert("RGBA")
             processed_img = rembg_model(img) # Using the BackgroundRemover
             final_views_images[view_name] = processed_img
@@ -43,16 +41,14 @@ def gen_from_images(subfolder, pipeline, rembg_model):
             # We hit a gap! Stop adding any further views in the sequence.
             break
 
-    # 3. Final Check: Do we at least have the front view?
     if 'front' not in final_views_images:
         print(f"Skipping {subfolder.name}: No valid 'front' view found to start the sequence.")
         return
 
-    processed_images = {}
     print(f"Generating mesh for '{subfolder.name}' with {len(final_views_images)} views...")    
     start_time = time.time()
     mesh = pipeline(
-        image=processed_images,
+        image=final_views_images,
         num_inference_steps=5,
         octree_resolution=512,
         num_chunks=20000,
