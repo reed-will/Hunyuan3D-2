@@ -16,7 +16,7 @@ def process_image_views(file_path,t_names):
             return None
 
 
-def gen_from_images(subfolder, pipeline, rembg_model):
+def gen_from_images(subfolder, pipeline, rembg_model, res):
     # Initialize dictionary with None
     images = {'front': None, 'left': None, 'back': None, 'right': None}
     
@@ -50,7 +50,7 @@ def gen_from_images(subfolder, pipeline, rembg_model):
     mesh = pipeline(
         image=final_views_images,
         num_inference_steps=6,
-        octree_resolution=1024,
+        octree_resolution=res,
         num_chunks=30000,
         generator=torch.manual_seed(12345),
         output_type='trimesh'
@@ -77,10 +77,11 @@ def main():
     parser = argparse.ArgumentParser(description="Generate meshes from folders")
     parser.add_argument("folder", help="The name/path of the folder")
     parser.add_argument("flag", nargs="?", default=None, help="Set to 'batch' for batch processing")
-
+    parser.add_argument("--res", type=int, default=512, help="Octree resolution (default: 512)")
+    
     args = parser.parse_args()
-    root_path = pathlib.Path(args.folder).resolve()
 
+    root_path = pathlib.Path(args.folder).resolve()
     if not root_path.is_dir():
         print(f"Error: '{args.folder}' is not a directory.")
         return
@@ -94,7 +95,7 @@ def main():
         print(f"\n{'='*30}")
         print(f"Processing: {target.name}")
         try:
-            gen_from_images(target, pipeline, rembg_model)
+            gen_from_images(target, pipeline, rembg_model, args.res)
         except torch.cuda.OutOfMemoryError:
             print(f"FAILED: Out of GPU Memory on {target.name}. Try reducing octree_resolution.")
             # Clear cache to attempt next folder
