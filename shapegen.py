@@ -49,9 +49,9 @@ def gen_from_images(subfolder, pipeline, rembg_model):
     start_time = time.time()
     mesh = pipeline(
         image=final_views_images,
-        num_inference_steps=5,
-        octree_resolution=512,
-        num_chunks=20000,
+        num_inference_steps=6,
+        octree_resolution=1024,
+        num_chunks=30000,
         generator=torch.manual_seed(12345),
         output_type='trimesh'
     )[0]
