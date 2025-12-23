@@ -16,8 +16,12 @@ def process_image_views(file_path,t_names):
             return None
 
 
-def gen_from_images(subfolder, pipeline, rembg_model, res):
-    # Initialize dictionary with None
+def gen_from_images(subfolder, pipeline, rembg_model, res, save_images_flag):
+    
+    debug_dir = subfolder / "processed_views" if save_images_flag else None
+    if debug_dir:
+        debug_dir.mkdir(exist_ok=True)
+
     images = {'front': None, 'left': None, 'back': None, 'right': None}
     
     for file in subfolder.iterdir():
@@ -37,6 +41,8 @@ def gen_from_images(subfolder, pipeline, rembg_model, res):
             img = Image.open(path).convert("RGBA")
             processed_img = rembg_model(img) # Using the BackgroundRemover
             final_views_images[view_name] = processed_img
+            if save_images_flag:
+                processed_img.save(debug_dir / f"{view_name}_processed.png")
         else:
             # We hit a gap! Stop adding any further views in the sequence.
             break
@@ -78,6 +84,7 @@ def main():
     parser.add_argument("folder", help="The name/path of the folder")
     parser.add_argument("flag", nargs="?", default=None, help="Set to 'batch' for batch processing")
     parser.add_argument("--res", type=int, default=512, help="Octree resolution (default: 512)")
+    parser.add_argument("--save-images", action="store_true", help="Save background-removed images")
     
     args = parser.parse_args()
 
@@ -95,7 +102,7 @@ def main():
         print(f"\n{'='*30}")
         print(f"Processing: {target.name}")
         try:
-            gen_from_images(target, pipeline, rembg_model, args.res)
+            gen_from_images(target, pipeline, rembg_model, args.res, args.save_images)
         except torch.cuda.OutOfMemoryError:
             print(f"FAILED: Out of GPU Memory on {target.name}. Try reducing octree_resolution.")
             # Clear cache to attempt next folder
