@@ -16,7 +16,7 @@ def process_image_views(file_path,t_names):
             return None
 
 
-def gen_from_images(subfolder, pipeline):
+def gen_from_images(subfolder, pipeline, rembg_model):
     # Initialize dictionary with None
     images = {'front': None, 'left': None, 'back': None, 'right': None}
     
@@ -64,6 +64,7 @@ def gen_from_images(subfolder, pipeline):
     return 0
 
 def main():
+    rembg_model = BackgroundRemover()
     pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
         'tencent/Hunyuan3D-2mv',
         subfolder='hunyuan3d-dit-v2-mv-turbo',
@@ -92,10 +93,10 @@ def main():
 
         for subfolder in subfolders:
             print(f"\nEntering subfolder: {subfolder.name}")
-            gen_from_images(subfolder, pipeline)
+            gen_from_images(subfolder, pipeline, rembg_model)
     else:
         print(f"--- STANDARD MODE: Scanning files in {root_path.name} ---")
-        gen_from_images(root_path, pipeline)
+        gen_from_images(root_path, pipeline, rembg_model)
 
 if __name__ == "__main__":
     main()
