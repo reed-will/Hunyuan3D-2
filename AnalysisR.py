@@ -8,7 +8,7 @@ import argparse
 import traceback
 
 class ModelAnalyzer:
-    def __init__(self, target_path, test_path, voxel_size=None, sample_threshold=10000):
+    def __init__(self, target_path, test_path, voxel_size=None, sample_threshold=100000):
         self.target_path = os.path.expanduser(target_path)
         self.test_path = os.path.expanduser(test_path)
         self.test_name = os.path.basename(self.test_path)
