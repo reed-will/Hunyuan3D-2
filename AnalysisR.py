@@ -75,9 +75,9 @@ class ModelAnalyzer:
         self.test_pcd = self._ensure_dense_pcd(self.test_mesh, "Test", count=150000)
 
         # Build Target Mesh for Wireframe (using centered coords)
-        self.target_o3d_mesh = o3d.geometry.TriangleMesh()
-        self.target_o3d_mesh.vertices = o3d.utility.Vector3dVector(self.target_mesh.vertices)
-        self.target_o3d_mesh.triangles = o3d.utility.Vector3iVector(self.target_mesh.faces)
+        # self.target_o3d_mesh = o3d.geometry.TriangleMesh()
+        # self.target_o3d_mesh.vertices = o3d.utility.Vector3dVector(self.target_mesh.vertices)
+        # self.target_o3d_mesh.triangles = o3d.utility.Vector3iVector(self.target_mesh.faces)
 
         # 4. Alignment
         t_down, t_fpfh = self._get_features(target_pcd)
@@ -146,8 +146,6 @@ def main():
     parser.add_argument("csv_path", help="Path to CSV")
     parser.add_argument("--out", default="results", help="Output dir")
     args = parser.parse_args()
-
-    # FIX: Expand user for the CSV path itself
     csv_path = os.path.expanduser(args.csv_path)
 
     if not os.path.exists(csv_path):
@@ -164,7 +162,7 @@ def main():
                 print(f"Row {test_p}")
                 analyzer = ModelAnalyzer(target_p, test_p)
                 dists = analyzer.align_and_measure()
-                analyzer.visualize_with_overlay(dists)
+                #analyzer.visualize_with_overlay(dists)
                 analyzer.save_output(dists, args.out)
                 all_results.append(analyzer.results)
             except Exception as e:
