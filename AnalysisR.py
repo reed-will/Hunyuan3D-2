@@ -178,5 +178,5 @@ def main():
             dict_writer.writeheader()
             dict_writer.writerows(all_results)
 
-f __name__ == "__main__":
+if __name__ == "__main__":
     main()
