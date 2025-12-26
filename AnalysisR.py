@@ -6,22 +6,22 @@ import json
 import os
 import csv
 import argparse
+import traceback  # Added for detailed error reporting
 
 class ModelAnalyzer:
     def __init__(self, target_path, test_path, voxel_size=None, sample_threshold=10000):
-        # Resolve ~/ paths
         self.target_path = os.path.expanduser(target_path)
         self.test_path = os.path.expanduser(test_path)
         self.test_name = os.path.basename(self.test_path)
-        
-        # FIX: Define sample_threshold so it can be used in _ensure_dense_pcd
         self.sample_threshold = sample_threshold
         
         self.target_mesh = self._load_mesh(self.target_path)
         self.test_mesh = self._load_mesh(self.test_path)
         
         if voxel_size is None:
-            diag = np.linalg.norm(self.target_mesh.bounding_box.extents)
+            # Manual calculation of diagonal to avoid attribute errors
+            extents = self.target_mesh.bounding_box.extents
+            diag = np.sqrt(np.sum(extents**2))
             self.voxel_size = diag / 100
         else:
             self.voxel_size = voxel_size
@@ -34,30 +34,30 @@ class ModelAnalyzer:
         mesh = trimesh.load(path)
         if isinstance(mesh, trimesh.Scene):
             mesh = mesh.to_geometry()
-        mesh.vertices = np.array(mesh.vertices, copy=True)
         
-        mesh.fix_normals()
-        if hasattr(mesh, 'vertex_normals'):
-            mesh.vertex_normals = np.array(mesh.vertex_normals, copy=True)
-        return mesh
+        # ULTIMATE FIX: Create a completely fresh Trimesh object 
+        # from copied arrays to break any links to read-only file buffers.
+        vertices = np.array(mesh.vertices, copy=True, dtype=np.float64)
+        faces = np.array(mesh.faces, copy=True, dtype=np.int64)
+        
+        new_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=True)
+        new_mesh.fix_normals()
+        return new_mesh
 
     def _ensure_dense_pcd(self, mesh, label, count=250000):
         v_count = len(mesh.vertices)
-        
         if v_count < self.sample_threshold:
-            print(f"[{label}] Sparse geometry ({v_count} vertices). Sampling {count} points...")
-            # Sample points and the indices of the faces they came from
+            print(f"[{label}] Sparse ({v_count} vertices). Sampling {count} points...")
             points, face_indices = trimesh.sample.sample_surface(mesh, count)
             normals = mesh.face_normals[face_indices]
         else:
-            print(f"[{label}] Dense geometry ({v_count} vertices).")
+            print(f"[{label}] Dense ({v_count} vertices).")
             points = mesh.vertices
-            # Fallback if vertex_normals are missing
             normals = mesh.vertex_normals if hasattr(mesh, 'vertex_normals') else mesh.face_normals[0]
 
         pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
-        pcd.normals = o3d.utility.Vector3dVector(normals)
+        pcd.points = o3d.utility.Vector3dVector(np.array(points, copy=True))
+        pcd.normals = o3d.utility.Vector3dVector(np.array(normals, copy=True))
         return pcd
 
     def align_and_measure(self):
@@ -68,18 +68,16 @@ class ModelAnalyzer:
         self.test_mesh.apply_scale(scale_factor)
 
         # 2. Centering
-        target_center = self.target_mesh.centroid
+        target_center = self.target_mesh.centroid.copy()
         self.target_mesh.vertices -= target_center
         self.test_mesh.vertices -= target_center
 
-        # Sampling
-        target_pcd = self._ensure_dense_pcd(self.target_mesh, "Target", count=250000)
-        self.test_pcd = self._ensure_dense_pcd(self.test_mesh, "Test", count=150000)
+        target_pcd = self._ensure_dense_pcd(self.target_mesh, "Target")
+        self.test_pcd = self._ensure_dense_pcd(self.test_mesh, "Test")
 
-        # Build Target Mesh for Wireframe (using centered coords)
-        # self.target_o3d_mesh = o3d.geometry.TriangleMesh()
-        # self.target_o3d_mesh.vertices = o3d.utility.Vector3dVector(self.target_mesh.vertices)
-        # self.target_o3d_mesh.triangles = o3d.utility.Vector3iVector(self.target_mesh.faces)
+        self.target_o3d_mesh = o3d.geometry.TriangleMesh()
+        self.target_o3d_mesh.vertices = o3d.utility.Vector3dVector(self.target_mesh.vertices)
+        self.target_o3d_mesh.triangles = o3d.utility.Vector3iVector(self.target_mesh.faces)
 
         # 4. Alignment
         t_down, t_fpfh = self._get_features(target_pcd)
@@ -99,7 +97,6 @@ class ModelAnalyzer:
         )
         self.test_pcd.transform(icp.transformation)
 
-        # 5. Metrics
         d_test_to_target = np.asarray(self.test_pcd.compute_point_cloud_distance(target_pcd))
         d_target_to_test = np.asarray(target_pcd.compute_point_cloud_distance(self.test_pcd))
 
@@ -121,37 +118,32 @@ class ModelAnalyzer:
 
     def visualize_with_overlay(self, distances):
         v_max = np.percentile(distances, 98)
-        v_min = np.min(distances)
-        norm_dist = np.clip((distances - v_min) / (v_max - v_min), 0, 1)
+        norm_dist = np.clip(distances / v_max, 0, 1)
         colors = plt.get_cmap("jet")(norm_dist)[:, :3]
         self.test_pcd.colors = o3d.utility.Vector3dVector(colors)
-        
         wireframe = o3d.geometry.LineSet.create_from_triangle_mesh(self.target_o3d_mesh)
         wireframe.paint_uniform_color([0, 0, 0])
         o3d.visualization.draw_geometries([self.test_pcd, wireframe], window_name=f"Overlay: {self.test_name}")
 
     def save_output(self, distances, output_dir):
         os.makedirs(output_dir, exist_ok=True)
-        # Consistent with visualization (98th percentile)
-        v_max = np.percentile(distances, 98) 
-        cmap = plt.get_cmap("jet")
-        colors = cmap(np.clip(distances / v_max, 0, 1))[:, :3]
+        v_max = np.percentile(distances, 98)
+        colors = plt.get_cmap("jet")(np.clip(distances / v_max, 0, 1))[:, :3]
         self.test_pcd.colors = o3d.utility.Vector3dVector(colors)
-
         base_name = os.path.splitext(self.test_name)[0]
         o3d.io.write_point_cloud(os.path.join(output_dir, f"{base_name}_heatmap.ply"), self.test_pcd)
         with open(os.path.join(output_dir, f"{base_name}_metrics.json"), "w") as f:
             json.dump(self.results, f, indent=4)
 
 def main():
-    parser = argparse.ArgumentParser(description="Batch 3D model analysis via CSV.")
-    parser.add_argument("csv_path", help="Path to CSV")
-    parser.add_argument("--out", default="results", help="Output dir")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("csv_path")
+    parser.add_argument("--out", default="results")
     args = parser.parse_args()
-    csv_path = os.path.expanduser(args.csv_path)
 
+    csv_path = os.path.expanduser(args.csv_path)
     if not os.path.exists(csv_path):
-        print(f"Error: CSV file '{csv_path}' not found.")
+        print(f"Error: CSV {csv_path} not found.")
         return
 
     all_results = []
@@ -160,23 +152,25 @@ def main():
         for row in reader:
             if len(row) < 2: continue
             target_p, test_p = row[0].strip(), row[1].strip()
+            print(f"\n--- Processing Pair ---\nTarget: {target_p}\nTest: {test_p}")
             try:
-                print(f"Row {test_p}")
                 analyzer = ModelAnalyzer(target_p, test_p)
                 dists = analyzer.align_and_measure()
-                #analyzer.visualize_with_overlay(dists)
+                analyzer.visualize_with_overlay(dists)
                 analyzer.save_output(dists, args.out)
                 all_results.append(analyzer.results)
             except Exception as e:
-                print(f"Failed {test_p}: {e}")
+                print(f"\nFAILED: {test_p}")
+                # This will print the exact line number and function that failed
+                traceback.print_exc() 
 
-    summary_path = os.path.join(args.out, "batch_summary.csv")
     if all_results:
-        keys = all_results[0].keys()
+        summary_path = os.path.join(args.out, "batch_summary.csv")
         with open(summary_path, 'w', newline='') as f:
-            dict_writer = csv.DictWriter(f, fieldnames=keys)
+            dict_writer = csv.DictWriter(f, fieldnames=all_results[0].keys())
             dict_writer.writeheader()
             dict_writer.writerows(all_results)
+        print(f"\nSummary saved to {summary_path}")
 
 if __name__ == "__main__":
     main()
