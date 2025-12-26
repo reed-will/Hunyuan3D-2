@@ -11,14 +11,19 @@ class ModelAnalyzer:
     """Core logic to compare a 'Test' model against a 'Target' (ground truth)"""
 
     def __init__(self, target_path, test_path, voxel_size=None):
-        self.test_name = os.path.basename(test_path)
-        self.target_mesh = self._load_mesh(target_path)
-        self.test_mesh = self._load_mesh(test_path)
+        # Resolve ~/ paths
+        self.target_path = os.path.expanduser(target_path)
+        self.test_path = os.path.expanduser(test_path)
         
-        # RNOTE: Should we do this here, or after alignment?
-        # Scale-dependent voxel size (approx 1% of model diagonal)
+        self.test_name = os.path.basename(self.test_path)
+        
+        self.target_mesh = self._load_mesh(self.target_path)
+        self.test_mesh = self._load_mesh(self.test_path)
+        
+        # Bounding box extents are (length, width, height)
         if voxel_size is None:
-            self.voxel_size = self.target_mesh.bounding_box.diagonal / 100
+            diag = np.linalg.norm(self.target_mesh.bounding_box.extents)
+            self.voxel_size = diag / 100
         else:
             self.voxel_size = voxel_size
             
