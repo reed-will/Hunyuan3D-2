@@ -8,19 +8,18 @@ import csv
 import argparse
 
 class ModelAnalyzer:
-    """Core logic to compare a 'Test' model against a 'Target' (ground truth)"""
-
-    def __init__(self, target_path, test_path, voxel_size=None):
+    def __init__(self, target_path, test_path, voxel_size=None, sample_threshold=10000):
         # Resolve ~/ paths
         self.target_path = os.path.expanduser(target_path)
         self.test_path = os.path.expanduser(test_path)
-        
         self.test_name = os.path.basename(self.test_path)
+        
+        # FIX: Define sample_threshold so it can be used in _ensure_dense_pcd
+        self.sample_threshold = sample_threshold
         
         self.target_mesh = self._load_mesh(self.target_path)
         self.test_mesh = self._load_mesh(self.test_path)
         
-        # Bounding box extents are (length, width, height)
         if voxel_size is None:
             diag = np.linalg.norm(self.target_mesh.bounding_box.extents)
             self.voxel_size = diag / 100
@@ -29,57 +28,78 @@ class ModelAnalyzer:
             
         self.results = {}
         self.test_pcd = None
-        self.target_pcd = None
+        self.target_o3d_mesh = None 
 
     def _load_mesh(self, path):
-        """Loads STL/OBJ/PLY/STEP and handles multi-part scenes."""
         mesh = trimesh.load(path)
         if isinstance(mesh, trimesh.Scene):
-            mesh = mesh.dump(concatenate=True)
+            mesh = mesh.to_geometry()
+        
+        # Ensure normals exist for sparse CAD data
+        mesh.fix_normals()
         return mesh
 
+    def _ensure_dense_pcd(self, mesh, label, count=250000):
+        v_count = len(mesh.vertices)
+        
+        if v_count < self.sample_threshold:
+            print(f"[{label}] Sparse geometry ({v_count} vertices). Sampling {count} points...")
+            # Sample points and the indices of the faces they came from
+            points, face_indices = trimesh.sample.sample_surface(mesh, count)
+            normals = mesh.face_normals[face_indices]
+        else:
+            print(f"[{label}] Dense geometry ({v_count} vertices).")
+            points = mesh.vertices
+            # Fallback if vertex_normals are missing
+            normals = mesh.vertex_normals if hasattr(mesh, 'vertex_normals') else mesh.face_normals[0]
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        pcd.normals = o3d.utility.Vector3dVector(normals)
+        return pcd
+
     def align_and_measure(self):
-        # 1. Scaling Test to match Target
+        # 1. Scaling
         target_extents = self.target_mesh.bounding_box.extents
         test_extents = self.test_mesh.bounding_box.extents
         scale_factor = np.mean(target_extents / test_extents)
         self.test_mesh.apply_scale(scale_factor)
 
-        # 2. Centering (Normalization)
+        # 2. Centering
         target_center = self.target_mesh.centroid
         self.target_mesh.vertices -= target_center
         self.test_mesh.vertices -= target_center
 
-        target_pcd = o3d.geometry.PointCloud()
-        target_pcd.points = o3d.utility.Vector3dVector(self.target_mesh.vertices)
-        test_pcd = o3d.geometry.PointCloud()
-        test_pcd.points = o3d.utility.Vector3dVector(self.test_mesh.vertices)
+        # Sampling
+        target_pcd = self._ensure_dense_pcd(self.target_mesh, "Target", count=250000)
+        self.test_pcd = self._ensure_dense_pcd(self.test_mesh, "Test", count=150000)
 
-        # 3. Global Registration (RANSAC)
+        # Build Target Mesh for Wireframe (using centered coords)
+        self.target_o3d_mesh = o3d.geometry.TriangleMesh()
+        self.target_o3d_mesh.vertices = o3d.utility.Vector3dVector(self.target_mesh.vertices)
+        self.target_o3d_mesh.triangles = o3d.utility.Vector3iVector(self.target_mesh.faces)
+
+        # 4. Alignment
         t_down, t_fpfh = self._get_features(target_pcd)
-        s_down, s_fpfh = self._get_features(test_pcd)
-
+        s_down, s_fpfh = self._get_features(self.test_pcd)
+        
         ransac = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
-            s_down, t_down, s_fpfh, t_fpfh, True, self.voxel_size * 1.5,
+            s_down, t_down, s_fpfh, t_fpfh, True, self.voxel_size * 2,
             o3d.pipelines.registration.TransformationEstimationPointToPoint(False), 3,
             [o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
-             o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(self.voxel_size * 1.5)],
+             o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(self.voxel_size * 2)],
             o3d.pipelines.registration.RANSACConvergenceCriteria(4000000, 500)
         )
 
-        # 4. Local ICP Refinement
-        target_pcd.estimate_normals()
         icp = o3d.pipelines.registration.registration_icp(
-            test_pcd, target_pcd, self.voxel_size, ransac.transformation,
+            self.test_pcd, target_pcd, self.voxel_size, ransac.transformation,
             o3d.pipelines.registration.TransformationEstimationPointToPlane()
         )
+        self.test_pcd.transform(icp.transformation)
 
-        self.test_pcd = test_pcd.transform(icp.transformation)
-        self.target_pcd = target_pcd
-
-        # 5. Metric Computation
-        d_test_to_target = np.asarray(self.test_pcd.compute_point_cloud_distance(self.target_pcd))
-        d_target_to_test = np.asarray(self.target_pcd.compute_point_cloud_distance(self.test_pcd))
+        # 5. Metrics
+        d_test_to_target = np.asarray(self.test_pcd.compute_point_cloud_distance(target_pcd))
+        d_target_to_test = np.asarray(target_pcd.compute_point_cloud_distance(self.test_pcd))
 
         self.results = {
             "test_model": self.test_name,
@@ -97,11 +117,23 @@ class ModelAnalyzer:
             pcd_down, o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*5, max_nn=100))
         return pcd_down, fpfh
 
+    def visualize_with_overlay(self, distances):
+        v_max = np.percentile(distances, 98)
+        v_min = np.min(distances)
+        norm_dist = np.clip((distances - v_min) / (v_max - v_min), 0, 1)
+        colors = plt.get_cmap("jet")(norm_dist)[:, :3]
+        self.test_pcd.colors = o3d.utility.Vector3dVector(colors)
+        
+        wireframe = o3d.geometry.LineSet.create_from_triangle_mesh(self.target_o3d_mesh)
+        wireframe.paint_uniform_color([0, 0, 0])
+        o3d.visualization.draw_geometries([self.test_pcd, wireframe], window_name=f"Overlay: {self.test_name}")
+
     def save_output(self, distances, output_dir):
         os.makedirs(output_dir, exist_ok=True)
-        max_dist = np.percentile(distances, 95)
+        # Consistent with visualization (98th percentile)
+        v_max = np.percentile(distances, 98) 
         cmap = plt.get_cmap("jet")
-        colors = cmap(np.clip(distances / max_dist, 0, 1))[:, :3]
+        colors = cmap(np.clip(distances / v_max, 0, 1))[:, :3]
         self.test_pcd.colors = o3d.utility.Vector3dVector(colors)
 
         base_name = os.path.splitext(self.test_name)[0]
@@ -111,34 +143,32 @@ class ModelAnalyzer:
 
 def main():
     parser = argparse.ArgumentParser(description="Batch 3D model analysis via CSV.")
-    parser.add_argument("csv_path", help="Path to CSV containing: target_path, test_path")
-    parser.add_argument("--out", default="results", help="Output directory name")
+    parser.add_argument("csv_path", help="Path to CSV")
+    parser.add_argument("--out", default="results", help="Output dir")
     args = parser.parse_args()
 
-    if not os.path.exists(args.csv_path):
-        print(f"Error: CSV file '{args.csv_path}' not found.")
+    # FIX: Expand user for the CSV path itself
+    csv_path = os.path.expanduser(args.csv_path)
+
+    if not os.path.exists(csv_path):
+        print(f"Error: CSV file '{csv_path}' not found.")
         return
 
     all_results = []
-    
-    with open(args.csv_path, 'r') as f:
+    with open(csv_path, 'r') as f:
         reader = csv.reader(f)
         for row in reader:
             if len(row) < 2: continue
-            target_path, test_path = row[0].strip(), row[1].strip()
-            
-            print(f"\nComparing:\nTarget: {target_path}\nTest:   {test_path}")
-            
+            target_p, test_p = row[0].strip(), row[1].strip()
             try:
-                analyzer = ModelAnalyzer(target_path, test_path)
-                distances = analyzer.align_and_measure()
-                analyzer.save_output(distances, args.out)
+                analyzer = ModelAnalyzer(target_p, test_p)
+                dists = analyzer.align_and_measure()
+                analyzer.visualize_with_overlay(dists)
+                analyzer.save_output(dists, args.out)
                 all_results.append(analyzer.results)
-                print(f"Success. Chamfer: {analyzer.results['chamfer_dist']:.6f}")
             except Exception as e:
-                print(f"Failed to process pair: {e}")
+                print(f"Failed {test_p}: {e}")
 
-    # Final summary CSV for all pairs processed
     summary_path = os.path.join(args.out, "batch_summary.csv")
     if all_results:
         keys = all_results[0].keys()
@@ -146,7 +176,3 @@ def main():
             dict_writer = csv.DictWriter(f, fieldnames=keys)
             dict_writer.writeheader()
             dict_writer.writerows(all_results)
-        print(f"\nDone. Master summary saved to {summary_path}")
-
-if __name__ == "__main__":
-    main()
