@@ -161,6 +161,7 @@ def main():
             if len(row) < 2: continue
             target_p, test_p = row[0].strip(), row[1].strip()
             try:
+                print(f"Row {test_p}")
                 analyzer = ModelAnalyzer(target_p, test_p)
                 dists = analyzer.align_and_measure()
                 analyzer.visualize_with_overlay(dists)
