@@ -30,7 +30,7 @@ class ModelAnalyzer:
         self.test_pcd = None
         self.target_o3d_mesh = None 
 
-def _load_mesh(self, path):
+    def _load_mesh(self, path):
         mesh = trimesh.load(path)
         if isinstance(mesh, trimesh.Scene):
             mesh = mesh.to_geometry()
