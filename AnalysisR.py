@@ -177,3 +177,6 @@ def main():
             dict_writer = csv.DictWriter(f, fieldnames=keys)
             dict_writer.writeheader()
             dict_writer.writerows(all_results)
+
+f __name__ == "__main__":
+    main()
