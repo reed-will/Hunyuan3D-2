@@ -29,7 +29,7 @@ class ProfessionalAnalyzer:
                 mesh = mesh.concatenate()
             else:
                 mesh = trimesh.util.concatenate(mesh.dump())
-                        
+
         # Force writeable arrays
         v = np.array(mesh.vertices, copy=True, dtype=np.float64)
         f = np.array(mesh.faces, copy=True, dtype=np.int64)
@@ -50,12 +50,9 @@ class ProfessionalAnalyzer:
         return center, eigenvectors[:, idx]
 
     def _get_dense_pcd(self, mesh, count=250000):
-        if len(mesh.vertices) < self.sample_threshold:
-            points, face_indices = trimesh.sample.sample_surface(mesh, count)
-            normals = mesh.face_normals[face_indices]
-        else:
-            points = mesh.vertices
-            normals = mesh.vertex_normals if hasattr(mesh, 'vertex_normals') else mesh.face_normals[0]
+        #if len(mesh.vertices) < self.sample_threshold:
+        points, face_indices = trimesh.sample.sample_surface(mesh, count)
+        normals = mesh.face_normals[face_indices]
         
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(np.array(points, copy=True))
