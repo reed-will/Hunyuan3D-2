@@ -74,7 +74,7 @@ class ModelAnalyzer:
         self.test_mesh.apply_scale(scale_factor)
 
         # STEP 2: DENSE SAMPLING
-        target_pcd, target_was_sampled = self._ensure_dense_pcd(self.target_mesh, "Target")
+        target_pcd, target_was_sampled = self._ensure_dense_pcd(self.target_mesh, "Target", count=150000)
         test_pcd, _ = self._ensure_dense_pcd(self.test_mesh, "Test", count=150000)
 
         # Debug Save: Save the sampled target if requested
