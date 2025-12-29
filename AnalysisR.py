@@ -28,6 +28,11 @@ class ModelAnalyzer:
 
     def _load_mesh(self, path):
         mesh = trimesh.load(path)
+        if isinstance(mesh, trimesh.Scene):
+            if hasattr(mesh, 'concatenate'):
+                mesh = mesh.concatenate()
+            else:
+                mesh = trimesh.util.concatenate(mesh.dump())
         
         # Break read-only memory maps
         vertices = np.array(mesh.vertices, copy=True, dtype=np.float64)
