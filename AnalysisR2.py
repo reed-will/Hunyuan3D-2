@@ -25,8 +25,11 @@ class ProfessionalAnalyzer:
     def _load_mesh(self, path):
         mesh = trimesh.load(path)
         if isinstance(mesh, trimesh.Scene):
-            mesh = mesh.concatenate()
-        
+            if hasattr(mesh, 'concatenate'):
+                mesh = mesh.concatenate()
+            else:
+                mesh = trimesh.util.concatenate(mesh.dump())
+                        
         # Force writeable arrays
         v = np.array(mesh.vertices, copy=True, dtype=np.float64)
         f = np.array(mesh.faces, copy=True, dtype=np.int64)
