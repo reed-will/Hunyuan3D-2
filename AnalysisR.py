@@ -8,7 +8,7 @@ import argparse
 import traceback
 
 class ModelAnalyzer:
-    def __init__(self, target_path, test_path, voxel_size=None, sample_threshold=10000, debug=False):
+    def __init__(self, target_path, test_path, voxel_size=None, sample_threshold=25000, debug=False):
         self.target_path = os.path.expanduser(target_path)
         self.test_path = os.path.expanduser(test_path)
         self.test_name = os.path.basename(self.test_path)
@@ -39,7 +39,7 @@ class ModelAnalyzer:
         new_mesh.fix_normals()
         return new_mesh
 
-    def _ensure_dense_pcd(self, mesh, label, count=250000):
+    def _ensure_dense_pcd(self, mesh, label):
         v_count = len(mesh.vertices)
         is_sampled = False
         
