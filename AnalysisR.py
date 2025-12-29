@@ -28,8 +28,6 @@ class ModelAnalyzer:
 
     def _load_mesh(self, path):
         mesh = trimesh.load(path)
-        if isinstance(mesh, trimesh.Scene):
-            mesh = mesh.to_geometry()
         
         # Break read-only memory maps
         vertices = np.array(mesh.vertices, copy=True, dtype=np.float64)
