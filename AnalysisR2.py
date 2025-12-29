@@ -129,8 +129,19 @@ class ProfessionalAnalyzer:
 
     def save_output(self, distances, output_dir):
         os.makedirs(output_dir, exist_ok=True)
-        v_max = np.percentile(distances, 98)
-        norm_dist = np.clip(distances / (v_max if v_max > 0 else 1), 0, 1)
+
+        diag = np.sqrt(np.sum(self.target_mesh.bounding_box.extents**2))
+        
+        # 2. Define a "Failure Threshold" as a percentage of model scale
+        # Red = 3% of the model's diagonal size
+        max_threshold = diag * 0.03 
+        
+        # 3. Normalize distances to THIS scale, not the data's max
+        norm_dist = np.clip(distances / max_threshold, 0, 1)
+
+        # for maximum contrast use this:
+#        v_max = np.percentile(distances, 98)
+#        norm_dist = np.clip(distances / (v_max if v_max > 0 else 1), 0, 1)
         
         # Color mapping (Jet)
         c = np.zeros((len(norm_dist), 3))
