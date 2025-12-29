@@ -42,7 +42,7 @@ class ModelAnalyzer:
         new_mesh.fix_normals()
         return new_mesh
 
-    def _ensure_dense_pcd(self, mesh, label):
+    def _ensure_dense_pcd(self, mesh, label, count):
         v_count = len(mesh.vertices)
         is_sampled = False
         
