@@ -8,116 +8,101 @@ import argparse
 import traceback
 
 class ShapeAnalyzer:
-    def __init__(self, target_path, test_path, voxel_size=None, sample_threshold=10000):
+    def __init__(self, target_path, test_path, voxel_size=None):
         self.target_path = os.path.expanduser(target_path)
         self.test_path = os.path.expanduser(test_path)
         self.test_name = os.path.basename(self.test_path)
-        self.sample_threshold = sample_threshold
         
-        # Load and deeply copy to avoid read-only memory map errors
         self.target_mesh = self._load_mesh(self.target_path)
         self.test_mesh = self._load_mesh(self.test_path)
         
-        # Robust Voxel Calculation
+        # Use a robust voxel size (1/60th of the target's average span)
         extents = self.target_mesh.bounding_box.extents
-        self.voxel_size = voxel_size if voxel_size else np.max(extents) / 60
-            
+        self.voxel_size = voxel_size if voxel_size else np.mean(extents) / 60
+        self.results = {}
+
     def _load_mesh(self, path):
         mesh = trimesh.load(path)
         if isinstance(mesh, trimesh.Scene):
-            if hasattr(mesh, 'concatenate'):
-                mesh = mesh.concatenate()
-            else:
-                mesh = trimesh.util.concatenate(mesh.dump())
-
-        # Force writeable arrays
+            mesh = mesh.concatenate()
         v = np.array(mesh.vertices, copy=True, dtype=np.float64)
         f = np.array(mesh.faces, copy=True, dtype=np.int64)
-        new_mesh = trimesh.Trimesh(vertices=v, faces=f, process=True)
-        new_mesh.fix_normals()
-        return new_mesh
+        m = trimesh.Trimesh(vertices=v, faces=f, process=True)
+        return m
 
-
-    def _get_pcd(self, mesh, count=250000):
-        # Always sample for high-precision correspondence
-        points, face_indices = trimesh.sample.sample_surface(mesh, count)
-        normals = mesh.face_normals[face_indices]
+    def _get_pcd(self, mesh):
+        # High-density sampling for better correspondence
+        pts, face_idx = trimesh.sample.sample_surface(mesh, 300000)
         pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
-        pcd.normals = o3d.utility.Vector3dVector(normals)
+        pcd.points = o3d.utility.Vector3dVector(pts)
+        pcd.normals = o3d.utility.Vector3dVector(mesh.face_normals[face_idx])
         return pcd
 
     def align_and_measure(self):
-        # 1. INITIAL SETUP
-        target_pcd = self._get_pcd(self.target_mesh)
-        test_pcd = self._get_pcd(self.test_mesh)
+        # 1. ROBUST INITIAL SCALING (Point-Spread Ratio)
+        # This is much better than Bounding Boxes because it uses all points.
+        t_pcd = self._get_pcd(self.target_mesh)
+        s_pcd = self._get_pcd(self.test_mesh)
+        
+        t_pts = np.asarray(t_pcd.points)
+        s_pts = np.asarray(s_pcd.points)
+        
+        t_center = np.mean(t_pts, axis=0)
+        s_center = np.mean(s_pts, axis=0)
+        
+        # Calculate the "Mean Radius" of each cloud
+        t_spread = np.mean(np.linalg.norm(t_pts - t_center, axis=1))
+        s_spread = np.mean(np.linalg.norm(s_pts - s_center, axis=1))
+        
+        # Apply initial rough scale and translation to get them in the same workspace
+        rough_scale = t_spread / s_spread
+        s_pcd.scale(rough_scale, center=s_center)
+        s_pcd.translate(t_center - s_center)
 
-        # 2. GLOBAL REGISTRATION WITH SCALE SOLVER (The "Real" Scale)
-        # We use RANSAC but with Umeyama (with_scaling=True)
-        t_down, t_fpfh = self._get_features(target_pcd)
-        s_down, s_fpfh = self._get_features(test_pcd)
+        # 2. GLOBAL REGISTRATION (Umeyama/RANSAC)
+        # Solve for the precise Scale, Rotation, and Translation
+        t_down, t_fpfh = self._get_features(t_pcd)
+        s_down, s_fpfh = self._get_features(s_pcd)
 
-        # This step solves for Translation, Rotation, AND Scale simultaneously
-        ransac_result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
+        ransac = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
             s_down, t_down, s_fpfh, t_fpfh, True, self.voxel_size * 2,
-            o3d.pipelines.registration.TransformationEstimationPointToPoint(with_scaling=True), 
-            3, [
-                o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
-                o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(self.voxel_size * 2)
-            ], 
+            o3d.pipelines.registration.TransformationEstimationPointToPoint(with_scaling=True),
+            3, [o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
+                o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(self.voxel_size * 2)],
             o3d.pipelines.registration.RANSACConvergenceCriteria(4000000, 500)
         )
 
-        # Extract the calculated scale from the 4x4 transformation matrix
-        # The scale is the magnitude of the rotation component's columns
-        trans_matrix = ransac_result.transformation
-        detected_scale = np.linalg.norm(trans_matrix[0:3, 0])
-        print(f"Detected geometric scale: {detected_scale:.6f}x")
-
-        # 3. APPLY GLOBAL TRANSFORM
-        test_pcd.transform(trans_matrix)
-
-        # # 3. GLOBAL REGISTRATION (FAST GLOBAL REGISTRATION)
-        # # Extract features
-        # t_down = target_pcd.voxel_down_sample(self.voxel_size)
-        # s_down = test_pcd.voxel_down_sample(self.voxel_size)
-        # t_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*2, max_nn=30))
-        # s_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*2, max_nn=30))
+        # 3. ROBUST SCALE EXTRACTION (SVD/Determinant)
+        # Extract the uniform scale factor 's' from the 3x3 component of the 4x4 matrix
+        # T = [sR t; 0 1]. det(sR) = s^3 * det(R). Since det(R)=1, s = cbrt(det(sR)).
+        m3x3 = ransac.transformation[0:3, 0:3]
+        precision_scale = np.cbrt(np.linalg.det(m3x3))
+        total_scale = rough_scale * precision_scale
         
-        # t_fpfh = o3d.pipelines.registration.compute_fpfh_feature(t_down, o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*5, max_nn=100))
-        # s_fpfh = o3d.pipelines.registration.compute_fpfh_feature(s_down, o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*5, max_nn=100))
+        # Apply final transform
+        s_pcd.transform(ransac.transformation)
 
-        # # Fast Global Registration is better than RANSAC for mechanical parts
-        # result_fgr = o3d.pipelines.registration.registration_fgr_based_on_feature_matching(
-        #     s_down, t_down, s_fpfh, t_fpfh,
-        #     o3d.pipelines.registration.FastGlobalRegistrationOption(
-        #         maximum_correspondence_distance=self.voxel_size * 1.5,
-        #         iteration_number=64)
-        # )
-
-        # 4. LOCAL REFINEMENT (ICP) - Scale is now fixed, refining pose
-        target_pcd.estimate_normals()
-        icp_result = o3d.pipelines.registration.registration_icp(
-            test_pcd, target_pcd, self.voxel_size, np.eye(4),
+        # 4. ICP REFINEMENT (Local snap)
+        icp = o3d.pipelines.registration.registration_icp(
+            s_pcd, t_pcd, self.voxel_size, np.eye(4),
             o3d.pipelines.registration.TransformationEstimationPointToPlane()
         )
-        test_pcd.transform(icp_result.transformation)
+        s_pcd.transform(icp.transformation)
 
         # 5. METRICS
-        d_test_to_target = np.asarray(test_pcd.compute_point_cloud_distance(target_pcd))
-        d_target_to_test = np.asarray(target_pcd.compute_point_cloud_distance(test_pcd))
+        d_s_to_t = np.asarray(s_pcd.compute_point_cloud_distance(t_pcd))
+        d_t_to_s = np.asarray(t_pcd.compute_point_cloud_distance(s_pcd))
 
         self.results = {
             "test_model": self.test_name,
-            "chamfer_dist": float(np.mean(d_test_to_target**2) + np.mean(d_target_to_test**2)),
-            "hausdorff_dist": float(max(np.max(d_test_to_target), np.max(d_target_to_test))),
-            "mean_deviation": float(np.mean(d_test_to_target)),
-            "std_deviation": float(np.std(d_test_to_target))
+            "calculated_scale": float(total_scale),
+            "chamfer_dist": float(np.mean(d_s_to_t**2) + np.mean(d_t_to_s**2)),
+            "hausdorff_dist": float(max(np.max(d_s_to_t), np.max(d_t_to_s))),
+            "mean_deviation": float(np.mean(d_s_to_t))
         }
-        
-        self.final_pcd = test_pcd
-        return d_test_to_target
-    
+        self.final_pcd = s_pcd
+        return d_s_to_t
+
     def _get_features(self, pcd):
         down = pcd.voxel_down_sample(self.voxel_size)
         down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*2, max_nn=30))
@@ -127,30 +112,25 @@ class ShapeAnalyzer:
 
     def save_output(self, distances, output_dir):
         os.makedirs(output_dir, exist_ok=True)
-
-        diag = np.sqrt(np.sum(self.target_mesh.bounding_box.extents**2))
+        # Better Heatmap Scale: Normalize by the Target's "Mean Radius" (spread)
+        # This makes the color relative to the physical bulk of the part.
+        t_pts = np.asarray(self.target_mesh.vertices)
+        t_spread = np.mean(np.linalg.norm(t_pts - np.mean(t_pts, axis=0), axis=1))
         
-        # "Failure Threshold" as a percentage of model scale
-        # Red = 3% of the model's diagonal size
-        max_threshold = diag * 0.03 
+        # Set Red to be 2% of the model's average radius
+        v_max = t_spread * 0.02
+        norm_dist = np.clip(distances / v_max, 0, 1)
         
-        # 3. Normalize distances to THIS scale, not the data's max
-        norm_dist = np.clip(distances / max_threshold, 0, 1)
-
-        # for maximum contrast use this:
-#        v_max = np.percentile(distances, 98)
-#        norm_dist = np.clip(distances / (v_max if v_max > 0 else 1), 0, 1)
-        
-        # Color mapping (Jet)
+        # Jet Colormap Logic
         c = np.zeros((len(norm_dist), 3))
         v4 = norm_dist * 4
-        c[:, 0] = np.clip(np.minimum(v4 - 1.5, -v4 + 4.5), 0, 1)
-        c[:, 1] = np.clip(np.minimum(v4 - 0.5, -v4 + 3.5), 0, 1)
-        c[:, 2] = np.clip(np.minimum(v4 + 0.5, -v4 + 2.5), 0, 1)
+        c[:, 0] = np.clip(np.minimum(v4 - 1.5, -v4 + 4.5), 0, 1) # R
+        c[:, 1] = np.clip(np.minimum(v4 - 0.5, -v4 + 3.5), 0, 1) # G
+        c[:, 2] = np.clip(np.minimum(v4 + 0.5, -v4 + 2.5), 0, 1) # B
         
         self.final_pcd.colors = o3d.utility.Vector3dVector(c)
         base_name = os.path.splitext(self.test_name)[0]
-        o3d.io.write_point_cloud(os.path.join(output_dir, f"{base_name}_heatmap.ply"), self.final_pcd)
+        o3d.io.write_point_cloud(os.path.join(output_dir, f"{base_name}_aligned.ply"), self.final_pcd)
         with open(os.path.join(output_dir, f"{base_name}_metrics.json"), "w") as f:
             json.dump(self.results, f, indent=4)
 
