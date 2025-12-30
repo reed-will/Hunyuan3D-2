@@ -117,13 +117,20 @@ class ShapeAnalyzer:
         
         self.final_pcd = test_pcd
         return d_test_to_target
+    
+    def _get_features(self, pcd):
+        down = pcd.voxel_down_sample(self.voxel_size)
+        down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*2, max_nn=30))
+        fpfh = o3d.pipelines.registration.compute_fpfh_feature(
+            down, o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*5, max_nn=100))
+        return down, fpfh
 
     def save_output(self, distances, output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
         diag = np.sqrt(np.sum(self.target_mesh.bounding_box.extents**2))
         
-        # 2. Define a "Failure Threshold" as a percentage of model scale
+        # "Failure Threshold" as a percentage of model scale
         # Red = 3% of the model's diagonal size
         max_threshold = diag * 0.03 
         
