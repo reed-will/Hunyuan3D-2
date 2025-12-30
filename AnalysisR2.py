@@ -130,7 +130,7 @@ class ShapeAnalyzer:
         
         self.final_pcd.colors = o3d.utility.Vector3dVector(c)
         base_name = os.path.splitext(self.test_name)[0]
-        o3d.io.write_point_cloud(os.path.join(output_dir, f"{base_name}_aligned.ply"), self.final_pcd)
+        o3d.io.write_point_cloud(os.path.join(output_dir, f"{base_name}_aligned.ply"), self.final_pcd, write_ascii=True)
         with open(os.path.join(output_dir, f"{base_name}_metrics.json"), "w") as f:
             json.dump(self.results, f, indent=4)
 
