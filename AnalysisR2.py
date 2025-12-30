@@ -7,7 +7,7 @@ import csv
 import argparse
 import traceback
 
-class ProfessionalAnalyzer:
+class ShapeAnalyzer:
     def __init__(self, target_path, test_path, voxel_size=None, sample_threshold=10000):
         self.target_path = os.path.expanduser(target_path)
         self.test_path = os.path.expanduser(test_path)
@@ -37,82 +37,73 @@ class ProfessionalAnalyzer:
         new_mesh.fix_normals()
         return new_mesh
 
-    def _pca_alignment(self, pcd):
-        """Calculates the center and principal axes of a point cloud."""
-        pts = np.asarray(pcd.points)
-        center = np.mean(pts, axis=0)
-        pts_centered = pts - center
-        # Covariance matrix for PCA
-        cov = np.dot(pts_centered.T, pts_centered) / pts.shape[0]
-        eigenvalues, eigenvectors = np.linalg.eig(cov)
-        # Sort eigenvectors by eigenvalues (descending)
-        idx = eigenvalues.argsort()[::-1]
-        return center, eigenvectors[:, idx]
 
-    def _get_dense_pcd(self, mesh, count=250000):
-        #if len(mesh.vertices) < self.sample_threshold:
+    def _get_pcd(self, mesh, count=250000):
+        # Always sample for high-precision correspondence
         points, face_indices = trimesh.sample.sample_surface(mesh, count)
         normals = mesh.face_normals[face_indices]
-        
         pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(np.array(points, copy=True))
-        pcd.normals = o3d.utility.Vector3dVector(np.array(normals, copy=True))
+        pcd.points = o3d.utility.Vector3dVector(points)
+        pcd.normals = o3d.utility.Vector3dVector(normals)
         return pcd
 
     def align_and_measure(self):
-        # 1. PRE-PROCESSING: DENSE SAMPLING
-        target_pcd = self._get_dense_pcd(self.target_mesh)
-        test_pcd = self._get_dense_pcd(self.test_mesh)
+        # 1. INITIAL SETUP
+        target_pcd = self._get_pcd(self.target_mesh)
+        test_pcd = self._get_pcd(self.test_mesh)
 
-        # 2. PCA SCALING & CENTERING
-        # We use the standard deviation of distances to the center for robust scaling
-        t_pts = np.asarray(target_pcd.points)
-        s_pts = np.asarray(test_pcd.points)
-        
-        t_center, t_axes = self._pca_alignment(target_pcd)
-        s_center, s_axes = self._pca_alignment(test_pcd)
-        
-        # Calculate robust scale factor
-        t_scale = np.std(np.linalg.norm(t_pts - t_center, axis=1))
-        s_scale = np.std(np.linalg.norm(s_pts - s_center, axis=1))
-        scale_factor = t_scale / s_scale
-        
-        # Apply initial transform (Center and Scale)
-        test_pcd.scale(scale_factor, center=s_center)
-        test_pcd.translate(t_center - s_center)
+        # 2. GLOBAL REGISTRATION WITH SCALE SOLVER (The "Real" Scale)
+        # We use RANSAC but with Umeyama (with_scaling=True)
+        t_down, t_fpfh = self._get_features(target_pcd)
+        s_down, s_fpfh = self._get_features(test_pcd)
 
-        # 3. GLOBAL REGISTRATION (FAST GLOBAL REGISTRATION)
-        # Extract features
-        t_down = target_pcd.voxel_down_sample(self.voxel_size)
-        s_down = test_pcd.voxel_down_sample(self.voxel_size)
-        t_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*2, max_nn=30))
-        s_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*2, max_nn=30))
-        
-        t_fpfh = o3d.pipelines.registration.compute_fpfh_feature(t_down, o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*5, max_nn=100))
-        s_fpfh = o3d.pipelines.registration.compute_fpfh_feature(s_down, o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*5, max_nn=100))
-
-        # Fast Global Registration is better than RANSAC for mechanical parts
-        result_fgr = o3d.pipelines.registration.registration_fgr_based_on_feature_matching(
-            s_down, t_down, s_fpfh, t_fpfh,
-            o3d.pipelines.registration.FastGlobalRegistrationOption(
-                maximum_correspondence_distance=self.voxel_size * 1.5,
-                iteration_number=64)
+        # This step solves for Translation, Rotation, AND Scale simultaneously
+        ransac_result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
+            s_down, t_down, s_fpfh, t_fpfh, True, self.voxel_size * 2,
+            o3d.pipelines.registration.TransformationEstimationPointToPoint(with_scaling=True), 
+            3, [
+                o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
+                o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(self.voxel_size * 2)
+            ], 
+            o3d.pipelines.registration.RANSACConvergenceCriteria(4000000, 500)
         )
 
-        # 4. MULTI-SCALE REFINEMENT (POINT-TO-PLANE ICP)
-        current_trans = result_fgr.transformation
-        target_pcd.estimate_normals() # Ensure target has normals for Point-to-Plane
+        # Extract the calculated scale from the 4x4 transformation matrix
+        # The scale is the magnitude of the rotation component's columns
+        trans_matrix = ransac_result.transformation
+        detected_scale = np.linalg.norm(trans_matrix[0:3, 0])
+        print(f"Detected geometric scale: {detected_scale:.6f}x")
+
+        # 3. APPLY GLOBAL TRANSFORM
+        test_pcd.transform(trans_matrix)
+
+        # # 3. GLOBAL REGISTRATION (FAST GLOBAL REGISTRATION)
+        # # Extract features
+        # t_down = target_pcd.voxel_down_sample(self.voxel_size)
+        # s_down = test_pcd.voxel_down_sample(self.voxel_size)
+        # t_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*2, max_nn=30))
+        # s_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*2, max_nn=30))
         
-        for scale in [2.0, 1.0, 0.5]:
-            reg_p2l = o3d.pipelines.registration.registration_icp(
-                test_pcd, target_pcd, self.voxel_size * scale, current_trans,
-                o3d.pipelines.registration.TransformationEstimationPointToPlane()
-            )
-            current_trans = reg_p2l.transformation
+        # t_fpfh = o3d.pipelines.registration.compute_fpfh_feature(t_down, o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*5, max_nn=100))
+        # s_fpfh = o3d.pipelines.registration.compute_fpfh_feature(s_down, o3d.geometry.KDTreeSearchParamHybrid(radius=self.voxel_size*5, max_nn=100))
 
-        test_pcd.transform(current_trans)
+        # # Fast Global Registration is better than RANSAC for mechanical parts
+        # result_fgr = o3d.pipelines.registration.registration_fgr_based_on_feature_matching(
+        #     s_down, t_down, s_fpfh, t_fpfh,
+        #     o3d.pipelines.registration.FastGlobalRegistrationOption(
+        #         maximum_correspondence_distance=self.voxel_size * 1.5,
+        #         iteration_number=64)
+        # )
 
-        # 5. FINAL DISTANCE MEASUREMENTS
+        # 4. LOCAL REFINEMENT (ICP) - Scale is now fixed, refining pose
+        target_pcd.estimate_normals()
+        icp_result = o3d.pipelines.registration.registration_icp(
+            test_pcd, target_pcd, self.voxel_size, np.eye(4),
+            o3d.pipelines.registration.TransformationEstimationPointToPlane()
+        )
+        test_pcd.transform(icp_result.transformation)
+
+        # 5. METRICS
         d_test_to_target = np.asarray(test_pcd.compute_point_cloud_distance(target_pcd))
         d_target_to_test = np.asarray(target_pcd.compute_point_cloud_distance(test_pcd))
 
@@ -170,7 +161,7 @@ def main():
         for row in reader:
             if len(row) < 2: continue
             try:
-                analyzer = ProfessionalAnalyzer(row[0].strip(), row[1].strip())
+                analyzer = ShapeAnalyzer(row[0].strip(), row[1].strip())
                 dists = analyzer.align_and_measure()
                 analyzer.save_output(dists, args.out)
                 all_results.append(analyzer.results)
