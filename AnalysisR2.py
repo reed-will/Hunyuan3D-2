@@ -24,7 +24,7 @@ class ShapeAnalyzer:
     def _load_mesh(self, path):
         mesh = trimesh.load(path)
         if isinstance(mesh, trimesh.Scene):
-            mesh = mesh.concatenate()
+            mesh = trimesh.util.concatenate(mesh.dump())
         v = np.array(mesh.vertices, copy=True, dtype=np.float64)
         f = np.array(mesh.faces, copy=True, dtype=np.int64)
         m = trimesh.Trimesh(vertices=v, faces=f, process=True)
