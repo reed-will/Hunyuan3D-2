@@ -137,8 +137,8 @@ def analyze_shapes(src_path, ref_path, output_dir, model_id, use_trimmed=True):
     PRESERVE_PHYSICAL_SCALE = True 
     # ---------------------
 
-    V_src, F_src = load_mesh(mesh_src)
-    V_ref, F_ref = load_mesh(mesh_ref)
+    V_src, F_src = load_mesh(src_path)
+    V_ref, F_ref = load_mesh(ref_path)
 
     # 2. Alignment Logic
     if PRESERVE_PHYSICAL_SCALE:
