@@ -93,6 +93,9 @@ class MetrologyAnalyzer:
         # Extract precision scale from the 3x3 component (determinant method)
         m3x3 = ransac.transformation[0:3, 0:3]
         precision_scale = np.cbrt(np.linalg.det(m3x3))
+        if precision_scale < 0.0001:
+            precision_scale = 1
+            # sometimes this determinant is 0, apparently? That messes everything up.
         self.total_applied_scale *= precision_scale
         
         self.s_pcd.transform(ransac.transformation)
@@ -235,6 +238,12 @@ def main():
                 analyzer.apply_rough_scale_and_center()
                 
                 # 3. Global Registration (RANSAC + Umeyama Scale Solver)
+                analyzer.run_global_registration()
+
+                # 2. Again (what if we loop it til convergence? Could put a criteria and loop these various steps?)
+                analyzer.apply_rough_scale_and_center()
+
+                # 3. Again
                 analyzer.run_global_registration()
                 
                 # 4. Iterative Rigid Refinement (Successive Approximation)
