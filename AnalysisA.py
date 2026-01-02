@@ -131,34 +131,88 @@ def icp_simple(src, ref, iters=50, tol=1e-5):
 # ==========================================
 
 def analyze_shapes(src_path, ref_path, output_dir, model_id, use_trimmed=True):
-    V_src, F_src = load_mesh(src_path)
-    V_ref, F_ref = load_mesh(ref_path)
-    V_src, F_src = deduplicate_mesh(V_src, F_src)
-    V_ref, _ = deduplicate_mesh(V_ref, np.array([[0,0,0]], dtype=int))
+    # --- CONFIGURATION ---
+    # Set this to True if you want to see the real physical difference (e.g. mm)
+    # Set to False if you want to see "Shape only" error (resizes model to fit)
+    PRESERVE_PHYSICAL_SCALE = True 
+    # ---------------------
 
-    # Initial Alignment
-    V_s1, s, cV, cR = scale_center(V_src, V_ref)
+    # 1. Load with Trimesh (required for normals)
+    mesh_src = trimesh.load(os.path.expanduser(src_path.strip()))
+    mesh_ref = trimesh.load(os.path.expanduser(ref_path.strip()))
+    
+    # Merge scenes if necessary
+    if isinstance(mesh_src, trimesh.Scene): mesh_src = mesh_src.dump(concatenate=True)
+    if isinstance(mesh_ref, trimesh.Scene): mesh_ref = mesh_ref.dump(concatenate=True)
+
+    V_src, F_src = mesh_src.vertices, mesh_src.faces
+    V_ref, F_ref = mesh_ref.vertices, mesh_ref.faces
+
+    # 2. Alignment Logic
+    if PRESERVE_PHYSICAL_SCALE:
+        # Move to center but do NOT scale
+        V_s1 = V_src - V_src.mean(0) + V_ref.mean(0)
+    else:
+        # Notebook scaling logic
+        V_s1, s, cV, cR = scale_center(V_src, V_ref)
+
+    # Initial PCA and ICP
     R0, t0 = best_pca_rotation(V_s1, V_ref)
     V_pca = (R0 @ V_s1.T).T + t0
     
-    # Registration Choice
     if use_trimmed:
         V_aligned, _, _ = icp_point_to_point_trimmed(V_pca, V_ref)
     else:
         V_aligned, _, _ = icp_simple(V_pca, V_ref)
 
-    # Deviation Calculation
-    kd = cKDTree(V_ref)
-    dist, _ = kd.query(V_aligned, k=1)
-    dist_in_original_units = dist / s
+    # 3. SIGNED DISTANCE CALCULATION (The Notebook Way)
+    # Find nearest points on the surface (not just vertices)
+    closest, distance, triangle_id = mesh_ref.nearest.on_surface(V_aligned)
     
-    # Stats & Visualization 
-    stats = {"id": model_id, "mean": np.mean(dist), "rmse": np.sqrt(np.mean(dist**2)), "max": np.max(dist)}
-    stats = {"id": model_id, "mean": np.mean(dist_in_original_units), "rmse": np.sqrt(np.mean(dist_in_original_units**2)), "max": np.max(dist)}
+    # Get normals of the triangles where the closest points lie
+    normals = mesh_ref.face_normals[triangle_id]
     
-    fig = go.Figure(data=[go.Mesh3d(x=V_aligned[:,0], y=V_aligned[:,1], z=V_aligned[:,2],
-                    intensity=dist_in_original_units, colorscale='Viridis', i=F_src[:,0], j=F_src[:,1], k=F_src[:,2])])
-    fig.write_html(os.path.join(output_dir, f"{model_id}.html"))
+    # Direction vector from reference to source
+    direction = V_aligned - closest
+    
+    # Signed distance: Dot product of direction and normal
+    # If the dot product is positive, the point is "outside" (positive)
+    # If the dot product is negative, the point is "inside" (negative)
+    signed_dist = np.sum(direction * normals, axis=1)
+    
+    # Use the absolute distance from trimesh for magnitude to be safe
+    # then apply the sign from our dot product
+    signed_dist = np.sign(signed_dist) * distance
+
+    # 4. Stats
+    stats = {
+        "id": model_id,
+        "mean_signed": np.mean(signed_dist),
+        "abs_mean": np.mean(np.abs(signed_dist)),
+        "max_positive": np.max(signed_dist),
+        "max_negative": np.min(signed_dist)
+    }
+
+    # 5. DIVERGING PLOT (Red = too big, Blue = too small)
+    limit = np.max(np.abs(signed_dist)) # Center the scale
+    fig = go.Figure(data=[go.Mesh3d(
+        x=V_aligned[:,0], y=V_aligned[:,1], z=V_aligned[:,2],
+        i=F_src[:,0], j=F_src[:,1], k=F_src[:,2],
+        intensity=signed_dist,
+        colorscale='RdBu', # Diverging colormap
+        cmin=-limit, cmax=limit, # Force zero to be the middle
+        showscale=True
+    )])
+    fig.write_html(os.path.join(output_dir, f"{model_id}_signed.html"))
+
+    # Histogram including negative values
+    plt.figure()
+    plt.hist(signed_dist, bins=100, color='gray', edgecolor='black')
+    plt.axvline(0, color='red', linestyle='dashed') # Zero line
+    plt.title(f"Signed Deviation: {model_id}")
+    plt.savefig(os.path.join(output_dir, f"{model_id}_hist.png"))
+    plt.close()
+
     return stats
 
 def main():
