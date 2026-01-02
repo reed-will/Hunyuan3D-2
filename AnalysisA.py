@@ -137,16 +137,8 @@ def analyze_shapes(src_path, ref_path, output_dir, model_id, use_trimmed=True):
     PRESERVE_PHYSICAL_SCALE = True 
     # ---------------------
 
-    # 1. Load with Trimesh (required for normals)
-    mesh_src = trimesh.load(os.path.expanduser(src_path.strip()))
-    mesh_ref = trimesh.load(os.path.expanduser(ref_path.strip()))
-    
-    # Merge scenes if necessary
-    if isinstance(mesh_src, trimesh.Scene): mesh_src = mesh_src.dump(concatenate=True)
-    if isinstance(mesh_ref, trimesh.Scene): mesh_ref = mesh_ref.dump(concatenate=True)
-
-    V_src, F_src = mesh_src.vertices, mesh_src.faces
-    V_ref, F_ref = mesh_ref.vertices, mesh_ref.faces
+    V_src, F_src = load_mesh(mesh_src)
+    V_ref, F_ref = load_mesh(mesh_ref)
 
     # 2. Alignment Logic
     if PRESERVE_PHYSICAL_SCALE:
