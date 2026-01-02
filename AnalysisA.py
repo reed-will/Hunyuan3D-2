@@ -41,6 +41,7 @@ def scale_center(V, Vref):
     vmin, vmax = V.min(0), V.max(0)
     rmin, rmax = Vref.min(0), Vref.max(0)
     s = np.linalg.norm(rmax - rmin) / np.linalg.norm(vmax - vmin)
+    print(f'scale factor: {s:.6f}')
     cV, cR = (vmin + vmax)/2, (rmin + rmax)/2
     V1 = (V - cV) * s + cR
     return V1, s, cV, cR
@@ -148,12 +149,14 @@ def analyze_shapes(src_path, ref_path, output_dir, model_id, use_trimmed=True):
     # Deviation Calculation
     kd = cKDTree(V_ref)
     dist, _ = kd.query(V_aligned, k=1)
+    dist_in_original_units = dist / s
     
-    # Stats & Visualization (Saving logic remains same)
+    # Stats & Visualization 
     stats = {"id": model_id, "mean": np.mean(dist), "rmse": np.sqrt(np.mean(dist**2)), "max": np.max(dist)}
+    stats = {"id": model_id, "mean": np.mean(dist_in_original_units), "rmse": np.sqrt(np.mean(dist_in_original_units**2)), "max": np.max(dist)}
     
     fig = go.Figure(data=[go.Mesh3d(x=V_aligned[:,0], y=V_aligned[:,1], z=V_aligned[:,2],
-                    intensity=dist, colorscale='Viridis', i=F_src[:,0], j=F_src[:,1], k=F_src[:,2])])
+                    intensity=dist_in_original_units, colorscale='Viridis', i=F_src[:,0], j=F_src[:,1], k=F_src[:,2])])
     fig.write_html(os.path.join(output_dir, f"{model_id}.html"))
     return stats
 
