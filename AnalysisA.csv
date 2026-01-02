@@ -1,0 +1,9 @@
+model_path, reference_path
+~/Hunyuan3D-2/assets/gt_tests/brace_ref.stl, ~/Hunyuan3D-2/assets/gt_tests/brace_1x2_test.glb
+~/Hunyuan3D-2/assets/gt_tests/NP624_ref.stl, ~/Hunyuan3D-2/assets/gt_tests/NP624_test.glb
+~/Hunyuan3D-2/assets/gt_tests/RC_ref.stl, ~/Hunyuan3D-2/assets/gt_tests/RC_m_t_2.glb
+~/Hunyuan3D-2/assets/gt_tests/Wishbone_ref.stl, ~/Hunyuan3D-2/assets/gt_tests/Wishbone_test.glb
+~/Hunyuan3D-2/assets/gt_tests/brace_ref.stl, ~/Hunyuan3D-2/assets/gt_tests/brace_novivision.stl
+~/Hunyuan3D-2/assets/gt_tests/NP624_ref.stl, ~/Hunyuan3D-2/assets/gt_tests/NP624_mesh.stl
+~/Hunyuan3D-2/assets/gt_tests/RC_ref.stl, ~/Hunyuan3D-2/assets/gt_tests/RC_mesh.stl
+~/Hunyuan3D-2/assets/gt_tests/Wishbone_ref.stl, ~/Hunyuan3D-2/assets/gt_tests/Wishbone_mesh.stl
