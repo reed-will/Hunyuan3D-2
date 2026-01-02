@@ -1,4 +1,4 @@
-model_path, reference_path
+reference_path, model_path
 ~/Hunyuan3D-2/assets/gt_tests/brace_ref.stl, ~/Hunyuan3D-2/assets/gt_tests/brace_1x2_test.glb
 ~/Hunyuan3D-2/assets/gt_tests/NP624_ref.stl, ~/Hunyuan3D-2/assets/gt_tests/NP624_test.glb
 ~/Hunyuan3D-2/assets/gt_tests/RC_ref.stl, ~/Hunyuan3D-2/assets/gt_tests/RC_m_t_2.glb

@@ -21,7 +21,8 @@ def load_mesh(path):
     
     # GLB files often load as 'Scenes'. We merge them into a single mesh.
     if isinstance(mesh_data, trimesh.Scene):
-        mesh_obj = mesh_data.dump(concatenate=True)
+        # mesh_obj = mesh_data.dump(concatenate=True)
+        mesh_obj = mesh_data.to_geometry() # other version deprecated
     else:
         mesh_obj = mesh_data
         
@@ -172,4 +173,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-    
