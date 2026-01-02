@@ -26,7 +26,7 @@ def load_mesh(path):
     V = np.array(mesh_obj.vertices, dtype=np.float64)
     F = np.array(mesh_obj.faces)
     print(f"Loaded mesh: {path}")
-    return V, F
+    return mesh_obj, V, F
 
 def deduplicate_mesh(V, F, tol=1e-6):
     """Removes duplicate vertices and degenerate faces."""
@@ -137,8 +137,8 @@ def analyze_shapes(src_path, ref_path, output_dir, model_id, use_trimmed=True):
     PRESERVE_PHYSICAL_SCALE = True 
     # ---------------------
 
-    V_src, F_src = load_mesh(src_path)
-    V_ref, F_ref = load_mesh(ref_path)
+    mesh_src, V_src, F_src = load_mesh(src_path)
+    mesh_ref, V_ref, F_ref = load_mesh(ref_path)
 
     # 2. Alignment Logic
     if PRESERVE_PHYSICAL_SCALE:
