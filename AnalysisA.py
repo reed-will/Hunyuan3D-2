@@ -25,6 +25,7 @@ def load_mesh(path):
         
     V = np.array(mesh_obj.vertices, dtype=np.float64)
     F = np.array(mesh_obj.faces)
+    print(f"Loaded mesh: {path}")
     return V, F
 
 def deduplicate_mesh(V, F, tol=1e-6):
