@@ -5,27 +5,41 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
-from stl import mesh
+import trimesh # Switched to trimesh for .glb and .stl support
 from scipy.spatial import cKDTree
-from scipy.stats import norm
 
 # ==========================================
-# GEOMETRY UTILITIES (From Notebook)
+# GEOMETRY UTILITIES
 # ==========================================
 
 def load_mesh(path):
-    m = mesh.Mesh.from_file(path)
-    V = m.vectors.reshape(-1, 3).astype(np.float64)
-    F = np.arange(len(V)).reshape(-1, 3)
-    return V, F, m
+    """Loads STL or GLB files and returns vertices/faces."""
+    # Expand '~' to full home directory path
+    full_path = os.path.expanduser(path)
+    
+    mesh_data = trimesh.load(full_path)
+    
+    # GLB files often load as 'Scenes'. We merge them into a single mesh.
+    if isinstance(mesh_data, trimesh.Scene):
+        mesh_obj = mesh_data.dump(concatenate=True)
+    else:
+        mesh_obj = mesh_data
+        
+    V = np.array(mesh_obj.vertices, dtype=np.float64)
+    F = np.array(mesh_obj.faces)
+    return V, F
 
 def deduplicate_mesh(V, F, tol=1e-6):
     key = np.round(V / tol).astype(np.int64)
     _, keep_idx, inverse = np.unique(key, axis=0, return_index=True, return_inverse=True)
     Vd = V[keep_idx]
     Fd = inverse[F]
+    # Remove degenerate faces
     mask = np.all([Fd[:, 0] != Fd[:, 1], Fd[:, 1] != Fd[:, 2], Fd[:, 2] != Fd[:, 0]], axis=0)
     return Vd, Fd[mask]
+
+# (Include scale_center, pca_axes, best_pca_rotation, icp_point_to_point from previous script)
+# ... [Keeping the registration logic from the notebook] ...
 
 def scale_center(V, Vref):
     vmin, vmax = V.min(0), V.max(0)
@@ -43,7 +57,6 @@ def pca_axes(P):
 
 def best_pca_rotation(A, B, sample=30000, seed=0):
     VA, VB = pca_axes(A), pca_axes(B)
-    # 24 proper rotations
     mats = []
     for perm in itertools.permutations(range(3)):
         P = np.eye(3)[:, perm]
@@ -83,72 +96,80 @@ def icp_point_to_point(src, ref, iters=50, tol=1e-5):
     return (R @ src.T).T + t, R, t
 
 # ==========================================
-# MAIN ANALYSIS LOGIC
+# MAIN EXECUTION
 # ==========================================
 
 def analyze_shapes(src_path, ref_path, output_dir, model_id):
-    # 1. Load and Preprocess
-    V_src, F_src, _ = load_mesh(src_path)
-    V_ref, F_ref, _ = load_mesh(ref_path)
+    # 1. Load and Preprocess (with format handling)
+    V_src, F_src = load_mesh(src_path)
+    V_ref, F_ref = load_mesh(ref_path)
     V_src, F_src = deduplicate_mesh(V_src, F_src)
-    V_ref, _ = deduplicate_mesh(V_ref, np.array([]))
+    V_ref, _ = deduplicate_mesh(V_ref, np.array([[0,0,0]], dtype=int))
 
-    # 2. Registration (PCA then ICP)
+    # 2. Registration Logic
     V_s1, s, cV, cR = scale_center(V_src, V_ref)
     R0, t0 = best_pca_rotation(V_s1, V_ref)
     V_pca = (R0 @ V_s1.T).T + t0
     V_aligned, _, _ = icp_point_to_point(V_pca, V_ref)
 
-    # 3. Deviation Calculation
+    # 3. Deviation Stats
     kd = cKDTree(V_ref)
     dist, _ = kd.query(V_aligned, k=1)
     
     stats = {
         "model_id": model_id,
-        "mean_dev": np.mean(dist),
-        "std_dev": np.std(dist),
-        "max_dev": np.max(dist),
-        "rmse": np.sqrt(np.mean(dist**2))
+        "mean_deviation": np.mean(dist),
+        "rmse": np.sqrt(np.mean(dist**2)),
+        "max_deviation": np.max(dist)
     }
 
-    # 4. Save Plotly Interactive HTML
+    # 4. Save Visuals
     fig = go.Figure(data=[go.Mesh3d(
         x=V_aligned[:,0], y=V_aligned[:,1], z=V_aligned[:,2],
-        intensity=dist, colorscale='Viridis', showscale=True
+        intensity=dist, colorscale='Viridis', showscale=True,
+        i=F_src[:,0], j=F_src[:,1], k=F_src[:,2]
     )])
-    fig.update_layout(title=f"Deviation: {model_id}")
-    fig.write_html(os.path.join(output_dir, f"{model_id}_deviation.html"))
-
-    # 5. Save Histogram
+    fig.write_html(os.path.join(output_dir, f"{model_id}_analysis.html"))
+    
     plt.figure()
-    plt.hist(dist, bins=50, color='skyblue', edgecolor='black')
-    plt.title(f"Deviation Distribution - {model_id}")
-    plt.savefig(os.path.join(output_dir, f"{model_id}_histogram.png"))
+    plt.hist(dist, bins=50)
+    plt.title(f"Deviations: {model_id}")
+    plt.savefig(os.path.join(output_dir, f"{model_id}_hist.png"))
     plt.close()
 
     return stats
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv", required=True, help="Input CSV with model pairs")
-    parser.add_argument("--out", default="output_results", help="Output directory")
+    parser.add_argument("--csv", required=True)
+    parser.add_argument("--out", default="results")
     args = parser.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
     df = pd.read_csv(args.csv)
-    all_results = []
-
+    
+    # Ensure CSV is cleaned of extra spaces in headers
+    df.columns = [c.strip() for c in df.columns]
+    
+    results = []
     for idx, row in df.iterrows():
-        mid = row.get('id', f"model_{idx}")
-        print(f"Processing {mid}...")
+        # Using your exact CSV column names
+        m_path = row['model_path'].strip()
+        r_path = row['reference_path'].strip()
+        
+        # Create a name for the folder based on the file name
+        name = os.path.basename(m_path).split('.')[0]
+        print(f"[{idx+1}/{len(df)}] Analyzing {name}...")
+        
         try:
-            res = analyze_shapes(row['model_path'], row['reference_path'], args.out, mid)
-            all_results.append(res)
+            res = analyze_shapes(m_path, r_path, args.out, name)
+            results.append(res)
         except Exception as e:
-            print(f"Failed {mid}: {e}")
+            print(f"Error on {name}: {e}")
 
-    pd.DataFrame(all_results).to_csv(os.path.join(args.out, "summary.csv"), index=False)
-    print("Done.")
+    pd.DataFrame(results).to_csv(os.path.join(args.out, "all_stats.csv"), index=False)
 
 if __name__ == "__main__":
     main()
+
+    
